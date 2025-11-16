@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>捉星星</title>
+    <script src="./phaser.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+        background-color: #ffffff;
+      }
+
+      canvas {
+        display: block;
+        margin: 0 auto;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      var config = {
+        type: Phaser.AUTO, // 渲染模式，建议选择Auto
+        width: 1208, // canvas（游戏窗口）的宽度
+        height: 668, // canvas（游戏窗口）的高度
+        physics: {
+          // 为游戏添加添加物理系统配置
+          default: "arcade", // “街机”物理引擎
+          arcade: {
+            gravity: {
+              // 重力参数
+              y: 300,
+            },
+            debug: false, // 关闭调试模式
+          },
+        },
+        scene: {
+          // 场景默认配置函数
+          preload: preload,
+          create: create,
+          update: update,
+        },
+      };
+      var game = new Phaser.Game(config);
+      var gameOver = false; // 新增：游戏结束状态标识（默认未结束）
+      var powerups; // 新增：存储能量球组，全局可用
+      function preload() {
+        // preload函数用于预加载游戏所需要的资源
+        // 游戏内所有的资源都需要先导入再使用
+        this.load.image("sky", "src/天空.png");
+        this.load.image("mainground", "src/地面.png");
+        this.load.image("ground", "src/木板.png");
+        this.load.image("star", "src/星星.png");
+        this.load.image("bomb", "src/bomb.png");
+        this.load.image("powerup", "src/能量球.png");
+        this.load.image("dude", "src/人物正面.png");
+        this.load.image("walk", "src/人物右移3.png");
+        this.load.image("victory", "src/victory.png");
+        this.load.image("gameover", "src/gameover.png");
+        this.load.audio("bgm", "src/bgm.mp3");
+        this.load.audio("collect", "src/collect.mp3");
+        this.load.audio("hit", "src/hit.mp3");
+        this.load.audio("power", "src/power.mp3");
+        this.load.audio("win", "src/win.mp3");
+        this.load.audio("gameover", "src/gameover.mp3");
+      }
+      function create() {
+        // create函数用于为页面内添加资源，例如图片、音效等
+        // 加载背景图
+        const sky = this.add.image(604, 334, "sky");
+        this.platforms = this.physics.add.staticGroup();
+        // 底部主平台（铺满底部，scale调整大小适配窗口）
+        this.platforms.create(604, 668, "mainground").refreshBody();
+        // 创建角色
+        player = this.physics.add.sprite(580, 660, "dude").setScale(0.15);
+        // 设置不可超出世界背景
+        player.setCollideWorldBounds(true);
+        // 设置角色状态
+        playerState = "standing";
+        // 创建键盘控制
+        cursors = this.input.keyboard.createCursorKeys();
+        // 设置物理平台
+        platforms = this.physics.add.staticGroup();
+        platforms.create(200, 500, "ground").setScale(0.3).refreshBody();
+        platforms.create(550, 370, "ground").setScale(0.3).refreshBody();
+        platforms.create(780, 200, "ground").setScale(0.3).refreshBody();
+        platforms.create(100, 280, "ground").setScale(0.3).refreshBody();
+        platforms.create(1080, 330, "ground").setScale(0.3).refreshBody();
+        platforms.create(900, 510, "ground").setScale(0.3).refreshBody();
+        // 添加碰撞效果
+        this.physics.add.collider(player, platforms);
+        // 添加掉落收集物
+        stars = this.physics.add.group({
+          key: "star",
+          repeat: 9,
+          setXY: { x: 12, y: 2, stepX: 125 },
+        });
+        // 为每个子对象设置属性
+        stars.children.iterate(function (child) {
+          // 设置随机反弹强度
+          child.setBounceY(Phaser.Math.FloatBetween(0.4, 0.9));
+          // 设置大小（因为素材图片太大）
+          child.setScale(0.2);
+          // 设置与世界边界反弹
+          child.setCollideWorldBounds(true);
+          // 添加一些随机旋转效果
+          child.setAngularVelocity(Phaser.Math.Between(-100, 100));
+        });
+        // 设置星星与平台碰撞事件
+        this.physics.add.collider(stars, platforms);
+        // 设置吃星星事件
+        this.physics.add.overlap(player, stars, collectCoin, null, this);
+        // 分数显示
+        score = 0;
+        letterNum = 3;
+        scoreText = "";
+        scoreText = this.add.text(16, 16, "得分:0\n\n生命值:3", {
+          fontSize: "30px",
+          fill: "#FFFFFF",
+        });
+        // 播放背景音乐，true表示无限循环
+        bgm = this.sound.add("bgm", { loop: true, volume: 0.3 }); // volume是音量（0-1，可调整）
+        bgm.play(); // 启动播放
+        // 初始化能量球组
+        powerups = this.physics.add.group();
+        // 能量球与平台碰撞（避免穿透）
+        this.physics.add.collider(powerups, platforms);
+        // 吃能量球补充生命值的事件
+        this.physics.add.overlap(player, powerups, collectPowerup, null, this);
+      }
+
+      function update() {
+        // update函数会实时监听浏览器各种事件
+        // 这个函数里面的代码一直在运行
+        // 新增：游戏结束时直接返回，不执行任何移动逻辑
+        if (gameOver) {
+          return;
+        }
+        player.setVelocityX(0);
+        // 跳跃
+        if (cursors.up.isDown && player.body.onFloor()) {
+          player.setVelocityY(-350);
+          playerState = "jumping";
+        }
+        // 站立状态
+        if (playerState !== "jumping" && player.body.velocity.x === 0) {
+          playerState = "standing";
+          player.setTexture("dude");
+        }
+        // 左右移动
+        if (cursors.left.isDown) {
+          player.setVelocityX(-250);
+          player.setFlipX(true); // 翻转角色朝向
+          if (playerState !== "jumping") {
+            playerState = "walking";
+            player.setTexture("walk");
+          }
+        } else if (cursors.right.isDown) {
+          player.setVelocityX(250);
+          player.setFlipX(false); // 恢复默认朝向
+          if (playerState !== "jumping") {
+            playerState = "walking";
+            player.setTexture("walk");
+          }
+        }
+
+        // 检测是否落地
+        if (playerState == "jumping" && player.body.onFloor()) {
+          playerState = "standing";
+          player.setTexture("dude");
+        }
+      }
+
+      function collectCoin(player, star) {
+        star.disableBody(true, true);
+        this.sound.play("collect", {
+          volume: 1,
+          rate: 1,
+        });
+        score += 10;
+        scoreText.setText("得分：" + score + "\n\n" + "生命值：" + letterNum);
+
+        // 生成律师函
+        if (score != 0 && score % 2 == 0) {
+          bomb = this.physics.add.group({
+            key: "bomb",
+            repeat: 0,
+            setXY: { x: 0, y: 0 }, // 先占位，后面重新赋值随机位置
+          });
+          bomb.children.iterate(function (child) {
+            // 随机选择出现方向：1=左侧，2=右侧，3=上方
+            const dirType = Phaser.Math.Between(1, 3);
+            let x, y;
+
+            // 根据方向计算坐标
+            if (dirType === 1) {
+              // 左侧出现：x=0（左边界），y随机在100-500之间
+              x = 0;
+              y = Phaser.Math.Between(100, 500);
+            } else if (dirType === 2) {
+              // 右侧出现：x=1208（游戏宽度），y随机在100-500之间
+              x = 1208;
+              y = Phaser.Math.Between(100, 500);
+            } else {
+              // 上方出现：x随机在100-1100之间，y=0（上边界）
+              x = Phaser.Math.Between(100, 1100);
+              y = 0;
+            }
+            // 设置炸弹最终位置
+            child.setPosition(x, y);
+            // 设置大小
+            child.setScale(0.8);
+            // 设置与世界边界碰撞
+            child.setCollideWorldBounds(true);
+            // 弹性碰撞
+            child.setBounce(1.0025);
+            // 不同方向计算对应速度（确保炸弹向游戏内飞行）
+            let angle;
+            if (dirType === 1) {
+              // 左侧出现：向右下方飞行（角度30°-60°）
+              angle = Phaser.Math.Between(30, 60);
+            } else if (dirType === 2) {
+              // 右侧出现：向左下方飞行（角度120°-150°）
+              angle = Phaser.Math.Between(120, 150);
+            } else {
+              // 上方出现：向下方飞行（角度210°-330°，随机左右偏移）
+              angle = Phaser.Math.Between(210, 330);
+            }
+            // 随机速度
+            const speed = Phaser.Math.Between(150, 250);
+            // 将角度和速度转换为x和y速度分量
+            const rad = Phaser.Math.DegToRad(angle);
+            child.setVelocity(Math.cos(rad) * speed, Math.sin(rad) * speed);
+            // 添加一些随机旋转效果
+            child.setAngularVelocity(Phaser.Math.Between(-100, 100));
+          });
+          // 设置与平台碰撞
+          this.physics.add.collider(bomb, platforms);
+          // 设置与玩家碰撞
+          this.physics.add.overlap(player, bomb, collectLetter, null, this);
+        }
+
+        // 判定游戏结束
+        if (score == 100) {
+          gameOver = true; // 新增：标记游戏结束
+          setTimeout(() => {
+            this.physics.pause(); // 新增：暂停整个物理系统（包括炸弹）
+            bgm.stop(); // 新增：停止背景音乐
+            this.sound.play("win", {
+              volume: 1,
+              rate: 1,
+            });
+            this.add.image(604, 334, "victory");
+            this.add.text(430, 100, "Victory!", {
+              fontSize: "100px",
+              fill: "#FFD700", // 金色（也可以用 #FFA500 橙黄、#FFFF00 亮黄）
+              fontStyle: "bold", // 加粗
+              fontFamily: "Arial, 'Microsoft YaHei', sans-serif", // 字体（优先Arial，中文 fallback）
+              stroke: "#000", // 文字描边颜色（黑色）
+              strokeThickness: 4, // 描边粗细（4像素，增强立体）
+              shadow: {
+                offsetX: 3, // 阴影X偏移
+                offsetY: 3, // 阴影Y偏移
+                color: "#000", // 阴影颜色
+                blur: 5, // 阴影模糊度
+                fill: true, // 阴影是否填充
+              },
+            });
+          }, 1500);
+        }
+      }
+
+      function collectLetter(player, bomb) {
+        if (gameOver) {
+          // 新增：游戏结束后，炸弹碰到玩家也不响应
+          return;
+        }
+        this.sound.play("hit", {
+          volume: 1,
+          rate: 1,
+        });
+        bomb.disableBody(true, true);
+        letterNum = letterNum - 1;
+        scoreText.setText("得分：" + score + "\n\n" + "生命值：" + letterNum);
+
+        // 被炸后随机生成能量球（30%概率，避免太频繁）
+        if (Phaser.Math.Between(1, 10) <= 8) {
+          // 能量球生成位置：玩家当前位置附近随机偏移
+          // 全游戏随机位置：x在50-1158之间（避开边界），y在50-600之间（避开底部地面）
+          const x = Phaser.Math.Between(50, 1158);
+          const y = Phaser.Math.Between(50, 600);
+
+          // 创建能量球（使用你的power资源，缩放和星星一致）
+          const powerup = powerups.create(x, y, "powerup").setScale(0.6);
+          powerup.setBounceY(Phaser.Math.FloatBetween(0.4, 0.6)); // 轻微反弹
+          powerup.setCollideWorldBounds(true); // 不超出游戏边界
+        }
+
+        // 判定游戏结束
+        if (letterNum == 0) {
+          gameOver = true; // 新增：标记游戏结束
+          setTimeout(() => {
+            this.physics.pause(); // 新增：暂停整个物理系统（包括炸弹）
+            bgm.stop(); // 新增：停止背景音乐
+            this.sound.play("gameover", {
+              volume: 1,
+              rate: 1,
+            });
+            this.add.image(604, 334, "gameover");
+            this.add.text(420, 310, "Failure!", {
+              fontSize: "100px",
+              fill: "#FF3333",
+              fontStyle: "bold", // 加粗
+              fontFamily: "Arial, 'Microsoft YaHei', sans-serif", // 字体（优先Arial，中文 fallback）
+              stroke: "#000", // 文字描边颜色（黑色）
+              strokeThickness: 4, // 描边粗细（4像素，增强立体）
+              shadow: {
+                offsetX: 3, // 阴影X偏移
+                offsetY: 3, // 阴影Y偏移
+                color: "#000", // 阴影颜色
+                blur: 5, // 阴影模糊度
+                fill: true, // 阴影是否填充
+              },
+            });
+          }, 1500);
+        }
+      }
+
+      // 吃能量球补充生命值
+      function collectPowerup(player, powerup) {
+        // 移除能量球
+        powerup.disableBody(true, true);
+        // 播放能量球音效（你已导入power音效）
+        this.sound.play("power", { volume: 1, rate: 1 });
+        // 生命值+1（可限制最大生命值，比如最多3点）
+        if (letterNum < 3) {
+          // 这里限制最大3点，可改成你想要的上限
+          letterNum += 1;
+          // 更新生命值显示
+          scoreText.setText("得分：" + score + "\n\n" + "生命值：" + letterNum);
+        }
+      }
+    </script>
+  </body>
+</html>
